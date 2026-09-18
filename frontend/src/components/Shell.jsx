@@ -7,7 +7,7 @@ export const Shell = ({ children, data, connected }) => <div className="app-shel
     <NavLink to="/" className="brand" data-testid="brand-home"><span className="brand-symbol"><ArrowUpRight/><ArrowDownLeft/></span><span>parity<span className="brand-period">.</span></span></NavLink>
     <div className="workspace-label">TRADING WORKSPACE</div>
     <nav>{[
-      ['/', Zap, 'Auto optimizer'], ['/positions', Layers3, 'Positions'], ['/activity', History, 'Trade activity'],
+      ['/', Zap, 'Strict arbitrage'], ['/positions', Layers3, 'Positions'], ['/activity', History, 'Trade activity'],
       ['/simulator', FlaskConical, 'Paper lab'], ['/feed', Radio, 'Market data'], ['/settings', Settings2, 'Settings']
     ].map(([to, Icon, label]) => <NavLink end={to === '/'} to={to} key={to} data-testid={`nav-${to === '/' ? 'optimizer' : to.slice(1)}`} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><Icon size={18}/><span>{label}</span>{to === '/' && <i/>}</NavLink>)}</nav>
     <div className="sidebar-bottom"><div className="venue"><ChartNoAxesCombined size={18}/><span>Polymarket<span>CLOB · 5-minute markets</span></span><ArrowUpRight size={14}/></div><div className="safe-note"><ShieldCheck size={15}/><span>Your capital. Your constraints.</span></div><div className="version">PARITY TERMINAL <span>v1.0</span></div></div>

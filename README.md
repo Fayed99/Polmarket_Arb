@@ -2,7 +2,17 @@
 
 **Live market data. Automatic capital allocation. Independent UP and DOWN paper trading.**
 
-Parity watches Polymarket BTC, ETH and SOL 5-minute Up/Down markets, calculates fee-aware allocations, and displays a Binance spot-price reference chart. The application is a React frontend, FastAPI backend and MongoDB ledger.
+Parity watches Polymarket BTC, ETH and SOL 5-minute Up/Down markets, calculates strict equal-quantity arbitrage entries, and displays a Binance spot-price reference chart. The application is a React frontend, FastAPI backend and MongoDB ledger.
+
+## Locked automatic strategy
+
+All new automatic recommendations use **UP = DOWN = Q**, selecting the **smallest** executable quantity satisfying both **combined fee-inclusive cost >= $1.00** and **guaranteed profit >= $0.12**. The $0.12 comprises an immutable $0.10 floor plus an immutable $0.02 safety margin. Neither value can be changed through settings or relaxed by execution/recovery. Binance data never enters these calculations.
+
+Guaranteed payout is `min(actual UP shares, actual DOWN shares)`; guaranteed profit is that payout minus actual combined debit. Before execution, strict recommendations have equal shares and payout Q. Actual unequal fills retain explicit unmatched exposure and are not classified as strict arbitrage.
+
+The economic envelope caps combined debit at `min(available capital, Q - 0.12)`, allocates headroom once between the two legs, and binds per-leg debit and tick-aligned price ceilings. Slippage may tighten these limits. Execution rechecks actual depth, minimum Q, fees, configuration, freshness, synchronization and all caps. Changed quantities require a fresh quote, not silent resizing. Unexpected nonqualifying actual fills are recorded as `RECONCILIATION_EXCEPTION`; no extra purchase is made to meet minimum spending.
+
+The previous generalized optimizer is retained **only as isolated legacy implementation/tests**, not as an automatic recommendation or new-entry execution path. Existing historical trades are not relabeled. Manual UP/DOWN trades remain separate **directional paper trades, not arbitrage**.
 
 > **Current execution mode: PAPER ONLY.** Data is live, but purchases, fills, balances and recovery are simulated. Real-money orders are locked. There is no wallet connection, private-key handling, signing or live order submission. No ChatGPT/AI integration is included.
 
@@ -30,11 +40,11 @@ Parity watches Polymarket BTC, ETH and SOL 5-minute Up/Down markets, calculates 
 2. The chart shows that asset's live **Binance spot price**, its opening price for the current five-minute UTC window, the difference and countdown.
 3. The persistent contract-price bar shows **both UP and DOWN share prices at once**, including when you scroll. These prices come from Polymarket, not Binance.
 4. To choose your own direction, use the two **Trade your view** order panels. Enter a spend limit or share quantity for UP or DOWN, preview the order, accept the directional risk and confirm the paper buy. Neither panel requires switching a tab.
-5. To have Parity calculate a two-outcome allocation, set your **Budget pool**, **Optimization objective** and **Maximum acceptable loss**, then click **Apply parameters**.
+5. For an automatic strict pair, set your **Budget pool** and optional maximum deployment, then click **Apply parameters**. The equality rule and profit/cost thresholds are locked.
 6. Review the automatic recommendation: deployed capital, unspent cash, per-leg costs/fees/shares and both outcome profits. Click **Buy recommended trade** only when a valid opportunity exists.
 7. Inspect actual paper fills in **Positions** and **Trade activity**. **Paper lab** supports manual payoff calculations and failure scenarios. **Market data** exposes live ladders and feed checks.
 
-Initial workspace: **$1,000 simulated paper cash**, **$100 allocation pool**, **$1 maximum automatic-strategy loss**, **Maximum Upside** objective. The paper balance and pool are different concepts. Buying does not spend real money.
+Initial workspace: **$1,000 simulated paper cash**, **$100 allocation pool**, **Strict Arbitrage** strategy. The paper balance and pool are different concepts. Buying does not spend real money.
 
 Download this file inside the app with **User guide** beside the main heading.
 
@@ -77,7 +87,7 @@ Select **Shares** and enter the number of shares instead. The exchange minimum a
 
 ### Important manual-order safeguards
 
-- **A single-side order can lose its entire debit.** The automatic optimizer's maximum-loss setting does **not** cap manual directional risk. This is displayed before buying and requires explicit confirmation.
+- **A single-side order can lose its entire debit.** Strict-arbitrage qualification does **not** apply to manual directional trades. This is displayed before buying and requires explicit confirmation.
 - Budget pool, maximum deployment, paper cash, minimum order size, quantity precision, slippage, quote age, book freshness and market rollover checks still apply.
 - Each quote lasts **10 seconds**. Refresh it if it expires; changed prices are never silently accepted above the quoted debit/price limit.
 - Manual orders use one fresh outcome book. A cross-book synchronization requirement is unnecessary because the order does not combine UP and DOWN. The selected book must still be valid, fresh and connected.
@@ -95,7 +105,7 @@ Capital deployed = actual UP debit + actual DOWN debit
 Unspent cash = budget pool − capital deployed
 ```
 
-Parity automatically searches both **deployment size** and **UP/DOWN split**. A $100 pool can recommend $0, $6, $20 or another amount. It never forces a trade simply because money is available.
+Parity searches the smallest **equal share quantity Q** on the two actual ladders. UP and DOWN dollar costs may differ, but their share counts must be identical. A $100 pool can recommend $0, $6, $20 or another amount. It never forces a trade simply because money is available.
 
 For each candidate it walks both real ask ladders, applies fees per execution price, respects minimum quantities and precision, rejects excessive slippage, and computes both outcomes:
 
@@ -113,25 +123,17 @@ All displayed automatic payoffs are conditional on both legs filling. Two indepe
 
 ### Workflow
 
-1. Choose an asset and objective.
-2. Enter the capital pool and loss ceiling. Set optional limits under **Advanced constraints**.
+1. Choose an asset. Strict arbitrage is the only automatic strategy.
+2. Enter the capital pool and optional maximum deployment under **Capital limit**.
 3. Click **Apply parameters**. The optimizer recalculates on relevant updates with a one-second fallback.
 4. Review **Capital deployed**, **Unspent cash**, the exact two allocations and both outcome profits.
 5. Execute only when **READY**. The backend revalidates the current books and approved quantities/debits after simulated latency.
 
 ## Risk objectives
 
-| Objective | What is optimized | Qualification |
-|---|---|---|
-| Maximum upside | Best-case net profit | Worst case must stay within configured maximum loss |
-| Guaranteed profit | Worst-case net profit | Both outcome profits must meet required minimum after fees |
-| Controlled loss | Best-case net profit | Explicit worst-case loss ceiling, same protected-upside search as Maximum Upside |
-| Maximum worst-case | Minimum of the two outcome profits | Must beat the zero-deployment baseline |
-| Custom | Selected underlying objective | Adds deployment cap and UP share-allocation constraints |
+There is one active automatic objective: **smallest qualifying Q**, not maximum deployment or maximum profit dollars. No client-set objective, loss limit or minimum-profit override can bypass the locked policy. Generalized settings from existing workspaces are archived during migration; budget, deployment cap and feed/paper safeguards are preserved.
 
-Custom allocation percentages refer to **UP shares divided by total UP + DOWN shares**, not a percentage of dollars. Maximum deployment never authorizes spending beyond the pool or paper balance.
-
-**NO_TRADE is a successful, valid result.** Guaranteed Profit often finds no opportunity because asks, spread and fees can make the combined purchase cost exceed the payout.
+**NO_TRADE is a valid result.** If fees/depth prevent a $0.12 profit at an equal executable quantity costing at least $1.00, the recommendation deploys zero. `CALCULATION_LIMIT` means minimality could not be proven within the bounded search; it also authorizes no order.
 
 ## Fees, precision and execution
 
@@ -328,7 +330,8 @@ All application endpoints use `/api`. Workspace routes require `X-Session-ID: <U
 | GET | `/api/reference` | Binance public references for all supported assets |
 | POST | `/api/paper/manual/quote` | One-side quote: `side`, `amount`, `unit` (`dollars` or `shares`) |
 | POST | `/api/paper/manual/execute` | Buy quoted side: `quote_id`, unique `request_id`, `accept_directional_risk: true` |
-| POST | `/api/paper/execute` | Execute paired recommendation: `quote_id`, `request_id`, optional stress `scenario` |
+| POST | `/api/paper/quote` | Recompute and issue a strict executable quote from the current `decision_id` |
+| POST | `/api/paper/execute` | Execute a strict quote: `quote_id`, `request_id`, optional stress `scenario` |
 | GET | `/api/trades` | Workspace's latest 300 records, newest first |
 | POST | `/api/trades/{id}/recover` | Reevaluate an automatic RECOVERY_REQUIRED position |
 | POST | `/api/simulate` | Manual two-leg payoff, `up_shares` and `down_shares` |
@@ -354,8 +357,8 @@ Tests may use controlled book/storage fixtures; the app itself never replaces un
 - The optimizer is not a BTC/ETH/SOL prediction model. Binance charts provide context, not buy signals or settlement authority.
 - Manual orders are directional and can lose their entire cost. Automatic worst-case calculations assume the planned legs fill; execution failures can create additional exposure.
 - The public CLOB does not publish a guaranteed gap-free sequence protocol. Parity validates and rebuilds conservatively; it does not claim perfect recovery from every exchange anomaly.
-- The optimizer uses a bounded HiGHS search and exact post-validation. Unsupported fee exponents fail closed. There is a small conservative fee-rounding reserve.
+- The strict engine uses exact Decimal execution math, piecewise depth bounds and ascending quantity checks. It does not assume global profitability is monotonic. If the smallest qualifying quantity cannot be proven within the calculation limit, no order is authorized. Fee-rounding bounds only prune the search; final eligibility always requires the exact $0.12 threshold.
 - Paper execution approximates latency, liquidity loss and failures. It cannot reproduce every real matching-engine, queue-priority, settlement, network or oracle behavior.
-- Cash locks and quote storage are single-process. Durable transactional cash reservation, authenticated accounts and distributed execution are prerequisites before real-money or multi-worker operation.
+- Quotes are durable MongoDB records bound to workspace, strategy/policy, market/condition/token IDs, Q, fee/tick/quantity configuration, envelope, settings and fixed expiry. Atomic single-use claims prevent different request IDs reusing a quote. Consumed or interrupted quotes are never reopened. Quote issuance happens on purchase intent, not every SSE tick. Cash handling still uses single-process locks and separate ledger writes: transactional cash reservation and full crash-consistent balances remain prerequisites before real-money or multi-worker operation.
 - Official price-to-beat extraction and direct oracle subscriptions are not available. The UI labels that reference unavailable rather than substituting Binance.
 - No guarantee of profit or constant trade recommendations. **Keeping the entire pool in cash is often the correct result.**

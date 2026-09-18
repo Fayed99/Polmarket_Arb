@@ -7,7 +7,8 @@ import uuid
 from decimal import ROUND_DOWN
 from fastapi import HTTPException
 from books import side_integrity
-from optimizer import D, walk, payoff
+from execution_math import D, walk, payoff
+from quote_store import market_binding
 from paper import utcnow
 
 
@@ -57,39 +58,38 @@ def quote_single(market, settings, cash, request):
 class ManualPaperEngine:
     def __init__(self, paper):
         self.paper, self.feed, self.db = paper, paper.feed, paper.db
+        self.quotes = paper.quotes
 
     async def quote(self, session, request):
         async with session['lock']:
             settings = session['settings']
             market = self.feed.snapshot(settings.asset)
             leg = quote_single(market, settings, session['cash'], request)
-            identifier, now = str(uuid.uuid4()), time.time()
-            session['quotes'] = {k:v for k,v in session['quotes'].items() if now-v['created'] <= 10}
-            quote = {'kind': 'manual', 'quote_id': identifier, 'created': now, 'expires_at': now+10,
+            quote = {
                      'market_id': market['id'], 'asset': settings.asset, 'side': request.side,
                      'leg': leg, 'budget': settings.budget, 'paper': True,
                      'profit_if_win': float(D(leg['shares'])-D(leg['total_debit'])),
                      'max_loss': leg['total_debit'], 'cash_after': float(D(session['cash'])-D(leg['total_debit']))}
-            session['quotes'][identifier] = copy.deepcopy(quote)
-            return quote
+            return await self.quotes.issue(session,market,'manual_directional',quote)
 
     async def execute(self, session, request):
         async with session['lock']:
             prior = await self.db.trades.find_one({'session_id': session['id'], 'request_id': request.request_id}, {'_id': 0, 'session_id': 0})
             if prior:
+                if prior.get('quote_id') != request.quote_id or prior.get('trade_type') != 'MANUAL':
+                    raise HTTPException(409, 'Request identifier is bound to another trade.')
                 return prior
-            quote = session['quotes'].get(request.quote_id)
-            if not quote or quote.get('kind') != 'manual' or time.time() > quote['expires_at']:
-                raise HTTPException(409, 'Manual quote expired. Refresh the quote before buying.')
+            quote = await self.quotes.load(session,request.quote_id,'manual_directional')
             settings = session['settings'].model_copy(deep=True)
             if settings.asset != quote['asset']:
                 raise HTTPException(409, 'Selected asset changed; request a new quote.')
             market = self.feed.snapshot(settings.asset)
             status, reason = side_integrity(market, quote['side'], settings)
-            if status != 'LIVE' or market.get('id') != quote['market_id']:
+            if status != 'LIVE' or market_binding(market)!=quote['binding']:
                 raise HTTPException(409, reason if status != 'LIVE' else 'Market rolled over. Refresh your quote.')
             side = quote['side']
             record = {'id': str(uuid.uuid4()), 'session_id': session['id'], 'request_id': request.request_id,
+                      'quote_id':request.quote_id,
                       'created_at': utcnow(), 'asset': settings.asset, 'side': side, 'trade_type': 'MANUAL',
                       'market_id': market['id'], 'market_slug': market['slug'], 'market_end': market['end'],
                       'mode': 'PAPER', 'scenario': 'normal', 'objective': 'manual_directional',
@@ -97,13 +97,14 @@ class ManualPaperEngine:
                       'actual': None, 'fills': {}, 'remaining_shares': {'up':0,'down':0},
                       'sale_proceeds':0, 'events':[], 'actual_debit':0, 'realized_pnl':None,
                       'order_type':'FOK single leg', 'atomic':False, 'directional_risk_accepted':True}
+            await self.quotes.claim(session,quote,request.request_id,record['id'])
             self.paper.event(record, 'EXECUTING', f'Revalidating an intentional {side.upper()}-only paper purchase')
             await self.paper.save(session, record)
             await asyncio.sleep(settings.latency_ms/1000)
             market = self.feed.snapshot(settings.asset)
             state, reason = side_integrity(market, side, settings)
             filled = None
-            if state == 'LIVE' and market.get('id') == quote['market_id'] and random.random() >= settings.failure_rate:
+            if state == 'LIVE' and quote['expires_at']>time.time() and market_binding(market)==quote['binding'] and random.random() >= settings.failure_rate:
                 filled = self.paper.fill(market, side, quote['leg'], settings, settings.liquidity_retention)
                 if filled:
                     best = D(market['books'][side]['asks'][0][0])
@@ -120,5 +121,6 @@ class ManualPaperEngine:
                 session['cash'] = float(D(session['cash'])-D(filled['total_debit']))
                 self.paper.event(record, 'OPEN_POSITION', f'{side.upper()} paper order filled. Intentional one-sided exposure; no automatic hedge or recovery.')
             await self.paper.save(session, record)
+            await self.quotes.finish(session,request.quote_id,record['status'])
             await self.feed.notify()
             return self.paper.public(record)

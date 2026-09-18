@@ -15,10 +15,13 @@ from fastapi.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv(Path(__file__).parent / '.env')
-from models import Settings, ExecutionRequest, ManualRequest, StoredRecord, ManualBuyQuoteRequest, ManualBuyExecuteRequest
+from models import Settings, ExecutionRequest, ManualRequest, StoredRecord, ManualBuyQuoteRequest, ManualBuyExecuteRequest, StrictQuoteRequest
 from feed import MarketFeed
 from books import integrity, side_integrity
-from optimizer import optimize, no_trade, walk, payoff, D
+from strict_arbitrage import optimize, no_trade
+from strict_policy import STRATEGY, POLICY_VERSION, public_policy
+from execution_math import walk, payoff, D
+from settings_migration import migrate_settings
 from paper import PaperEngine, utcnow
 from manual import ManualPaperEngine
 from spot import SpotFeed
@@ -46,14 +49,17 @@ async def get_session(sid):
             if not doc:
                 doc = {'id': sid, 'settings': Settings().model_dump(), 'cash': float(os.environ['PAPER_INITIAL_BALANCE']), 'created_at': utcnow()}
                 await db.sessions.insert_one(copy.deepcopy(doc))
-            sessions[sid] = {'id': sid, 'settings': Settings(**doc['settings']), 'cash': doc['cash'], 'quotes': {}, 'lock': asyncio.Lock()}
+            active = migrate_settings(doc['settings'])
+            if doc['settings'] != active.model_dump():
+                await db.sessions.update_one({'id':sid}, {'$set':{'legacy_optimizer_settings':doc['settings'], 'settings':active.model_dump()}})
+            sessions[sid] = {'id': sid, 'settings': active, 'cash': doc['cash'], 'lock': asyncio.Lock()}
         return sessions[sid]
 
 
 async def settlement_loop():
     while not feed.stopping:
         try:
-            records = await db.trades.find({'status': {'$in': ['LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED']}, 'market_end': {'$lt': time.time() - 10}}, {'_id': 0}).to_list(100)
+            records = await db.trades.find({'status': {'$in': ['LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED', 'RECONCILIATION_EXCEPTION']}, 'market_end': {'$lt': time.time() - 10}}, {'_id': 0}).to_list(100)
             market_cache = {}
             for record in records:
                 slug = record['market_slug']
@@ -68,7 +74,7 @@ async def settlement_loop():
                 session = await get_session(record['session_id'])
                 async with session['lock']:
                     current = await db.trades.find_one({'id': record['id']}, {'_id': 0})
-                    if not current or current['status'] not in ('LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED'):
+                    if not current or current['status'] not in ('LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED', 'RECONCILIATION_EXCEPTION'):
                         continue
                     record = current
                     payout = record['remaining_shares'].get(winner, 0)
@@ -90,6 +96,9 @@ async def lifespan(app):
     await db.sessions.create_index('id', unique=True)
     await db.trades.create_index('id', unique=True)
     await db.trades.create_index([('session_id', 1), ('request_id', 1)], unique=True)
+    await db.quotes.create_index('quote_id', unique=True)
+    await db.quotes.create_index([('session_id',1),('state',1),('expires_at',1)])
+    await db.quotes.update_many({'state':'CLAIMED'}, {'$set':{'state':'CONSUMED','execution_status':'INTERRUPTED'}})
     await db.trades.update_many({'status': 'EXECUTING'}, {'$set': {'status': 'RECOVERY_REQUIRED'}, '$push': {'events': {'state': 'RECOVERY_REQUIRED', 'at': utcnow(), 'message': 'Application restarted during paper execution; reconciliation required'}}})
     await feed.start()
     await spot.start()
@@ -115,11 +124,6 @@ async def state(session):
     status, reason = integrity(market, settings)
     if decision['status'] == 'READY' and status != 'LIVE':
         decision = no_trade(settings, status, reason)
-    if decision['status'] == 'READY':
-        key = hashlib.sha256(json.dumps([market['id'], decision['up']['shares'], decision['down']['shares'], decision['deployed'], settings.model_dump()], sort_keys=True).encode()).hexdigest()[:24]
-        decision['quote_id'] = key
-        session['quotes'] = {k: v for k, v in session['quotes'].items() if time.time() - v['created'] <= 10}
-        session['quotes'][key] = {'created': time.time(), 'decision': copy.deepcopy(decision), 'settings': settings.model_dump(), 'market_id': market['id']}
     markets = []
     for entry in feed.registry:
         m = feed.snapshot(entry['asset'])
@@ -141,7 +145,7 @@ async def state(session):
         manual_quotes[side] = {'status': side_status, 'reason': side_reason}
     return {'settings': settings.model_dump(), 'markets': markets, 'market': market, 'decision': decision,
             'diagnostics': diagnostics, 'wallet': {'cash': session['cash'], 'mode': 'PAPER'}, 'server_time': time.time(), 'live_execution': False,
-            'reference': spot.snapshot(settings.asset), 'manual_quotes': manual_quotes}
+            'reference': spot.snapshot(settings.asset), 'manual_quotes': manual_quotes, 'policy':public_policy()}
 
 
 @app.get('/api/health')
@@ -186,10 +190,23 @@ async def save_settings(settings: Settings, x_session_id: str = Header(...)):
     session = await get_session(x_session_id)
     async with session['lock']:
         session['settings'] = settings
-        session['quotes'].clear()
+        await engine.quotes.invalidate(session['id'])
         await db.sessions.update_one({'id': session['id']}, {'$set': {'settings': settings.model_dump()}})
     await feed.notify()
     return settings
+
+
+@app.post('/api/paper/quote')
+async def strict_quote(req: StrictQuoteRequest, x_session_id: str = Header(...)):
+    session = await get_session(x_session_id)
+    async with session['lock']:
+        settings = session['settings'].model_copy(deep=True)
+        market = feed.snapshot(settings.asset)
+        decision = await asyncio.to_thread(optimize,market,settings,session['cash'])
+        state,_ = integrity(market,settings)
+        if state!='LIVE' or decision['status']!='READY' or decision.get('decision_id')!=req.decision_id:
+            raise HTTPException(409, 'Strict recommendation changed or is no longer executable. Wait for a fresh decision.')
+        return await engine.quotes.issue(session,market,STRATEGY,{'decision':decision,'policy_version':POLICY_VERSION})
 
 
 @app.post('/api/paper/execute', response_model=StoredRecord)
@@ -238,7 +255,7 @@ async def recover(trade_id: str, x_session_id: str = Header(...)):
             raise HTTPException(404, 'Paper trade not found')
         if record['status'] != 'RECOVERY_REQUIRED':
             raise HTTPException(409, 'This position does not require recovery')
-        await engine.recover(session, record, Settings(**record['settings']))
+        await engine.recover(session, record, migrate_settings(record['settings']))
         await engine.save(session, record)
         return engine.public(record)
 

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 Objective = Literal['maximum_upside', 'guaranteed_profit', 'controlled_loss', 'max_worst_case', 'custom']
 
 
-class Settings(BaseModel):
+class LegacyOptimizerSettings(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False, extra='forbid')
     asset: Literal['BTC', 'ETH', 'SOL'] = 'BTC'
     budget: float = Field(100, ge=0, le=100000)
@@ -29,6 +29,28 @@ class Settings(BaseModel):
         if self.min_up_share_pct > self.max_up_share_pct:
             raise ValueError('Minimum UP share allocation must not exceed maximum')
         return self
+
+
+class Settings(BaseModel):
+    """Active settings. Strategy and profit policy cannot be changed by a client."""
+    model_config = ConfigDict(allow_inf_nan=False, extra='forbid')
+    strategy: Literal['strict_arbitrage'] = 'strict_arbitrage'
+    asset: Literal['BTC', 'ETH', 'SOL'] = 'BTC'
+    budget: float = Field(100, ge=0, le=100000)
+    max_deployment: Optional[float] = Field(None, ge=0, le=100000)
+    sync_ms: int = Field(100, ge=10, le=5000)
+    stale_ms: int = Field(3000, ge=250, le=15000)
+    max_slippage_pct: float = Field(2, ge=0, le=20)
+    latency_ms: int = Field(350, ge=0, le=5000)
+    failure_rate: float = Field(0.03, ge=0, le=1)
+    liquidity_retention: float = Field(0.95, gt=0, le=1)
+    max_recovery_loss: float = Field(1, ge=0, le=1000)
+    paused: bool = False
+
+
+class StrictQuoteRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    decision_id: str = Field(min_length=8, max_length=100)
 
 
 class ExecutionRequest(BaseModel):

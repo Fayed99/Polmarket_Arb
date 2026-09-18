@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from books import Book, integrity
-from models import Settings
+from models import LegacyOptimizerSettings as Settings
 from optimizer import D, allowed, no_trade, optimize, payoff, walk
 
 

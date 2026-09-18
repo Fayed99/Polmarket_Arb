@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 import requests
 
-from models import Settings
+from models import LegacyOptimizerSettings as Settings
 from optimizer import allowed, optimize, payoff, walk
 
 

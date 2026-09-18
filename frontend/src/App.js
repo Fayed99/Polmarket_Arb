@@ -23,8 +23,8 @@ const Optimizer = ({ data, connected, save, saving, execute, executing, onTrade,
     {!connected && <div className="stream-recovery-banner" data-testid="stream-recovery-banner"><Radio size={14}/><span>Reconnecting to market updates. Last-known prices are shown; buying is paused.</span><button onClick={reconnect} data-testid="reconnect-stream-button"><RefreshCw size={13}/> Reconnect</button></div>}
     <SharePriceBar data={data} connected={connected}/>
     <div className="market-workbench"><SpotChart reference={data?.reference} asset={data?.settings?.asset || 'BTC'} connected={connected}/><ManualTradePanel data={data} connected={connected} onTrade={onTrade}/></div>
-    <div className="optimizer-section-label"><span><ShieldCheck size={14}/> AUTO ALLOCATION</span><span>Two outcomes. One calculated decision.</span></div>
-    <div className="workspace-grid"><StrategyPanel settings={data?.settings} save={save} saving={saving}/><DecisionPanel data={data} connected={connected} execute={execute} executing={executing}/></div>
+    <div className="optimizer-section-label"><span><ShieldCheck size={14}/> STRICT ARBITRAGE</span><span>Equal shares. Smallest qualifying quantity.</span></div>
+    <div className="workspace-grid"><StrategyPanel settings={data?.settings} policy={data?.policy} save={save} saving={saving}/><DecisionPanel data={data} connected={connected} execute={execute} executing={executing}/></div>
     <div className="health-strip"><div><Radio size={15}/><span>FEED HEALTH</span><strong className={data?.diagnostics?.status === 'LIVE' ? 'up' : 'amber'} data-testid="feed-status">{data?.diagnostics?.status || 'CONNECTING'}</strong></div><div><span>Book synchronization</span><b data-testid="sync-lag">{data?.diagnostics?.sync_ms ?? '—'} ms</b></div><div><span>Recalculation</span><b>Event-driven + 1s fallback</b></div><div><ShieldCheck size={13}/><span>Fees included</span></div><button onClick={() => navigate('/feed')} data-testid="view-diagnostics-button">View diagnostics <ArrowUpRight size={13}/></button></div>
   </>;
 };
@@ -53,9 +53,9 @@ function Workspace() {
     catch (e) { toast.error(errorText(e)); }
     finally { setSaving(false); }
   }, []);
-  const execute = useCallback(async (quote_id, scenario = 'normal') => {
+  const execute = useCallback(async (decision_id, scenario = 'normal') => {
     setExecuting(true);
-    try { const {data: record} = await api.post('/paper/execute', {quote_id, scenario, request_id: crypto.randomUUID()}); setTradeVersion(x => x+1); if (record.status === 'LOCKED_POSITION') toast.success('Paper trade filled. Both legs reconciled.'); else if (record.status === 'UNWOUND') toast.warning('One-sided fill recovered. Paper exposure unwound.'); else toast.warning(`${record.status.replaceAll('_',' ')}: ${record.events.at(-1)?.message}`); return record; }
+    try { const {data:quote}=await api.post('/paper/quote',{decision_id}); const {data: record} = await api.post('/paper/execute', {quote_id:quote.quote_id, scenario, request_id: crypto.randomUUID()}); setTradeVersion(x => x+1); if (record.status === 'LOCKED_POSITION') toast.success('Strict paper pair filled. Equal quantities and actual profit verified.'); else if (record.status === 'UNWOUND') toast.warning('One-sided fill recovered. Paper exposure unwound.'); else toast.warning(`${record.status.replaceAll('_',' ')}: ${record.events.at(-1)?.message}`); return record; }
     catch (e) { toast.error(errorText(e)); }
     finally { setExecuting(false); }
   }, []);

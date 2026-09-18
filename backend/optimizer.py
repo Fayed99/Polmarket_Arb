@@ -12,45 +12,7 @@ from books import integrity
 D = lambda x: Decimal(str(x))
 
 
-def walk(levels, quantity, fee, size_precision=2, selling=False):
-    step = D(10) ** -size_precision
-    q = D(quantity).quantize(step, rounding=ROUND_DOWN)
-    remaining, cost, fees, fills = q, D(0), D(0), []
-    for price, size in sorted(levels, reverse=selling):
-        p, available = D(price), D(size)
-        take = min(remaining, available)
-        if take <= 0:
-            continue
-        level_fee = take * D(fee['r']) * p * (1 - p)
-        cost += take * p
-        fees += level_fee
-        fills.append({'price': float(p), 'shares': float(take), 'fee': float(level_fee)})
-        remaining -= take
-        if remaining == 0:
-            break
-    if remaining > 0:
-        return None
-    fees = fees.quantize(D('0.00001'), rounding=ROUND_HALF_UP)
-    vwap = cost / q if q else D(0)
-    best = D(sorted(levels, reverse=selling)[0][0]) if levels else D(0)
-    return {'shares': float(q), 'purchase_cost': float(cost), 'fee': float(fees),
-            'total_debit': float(cost + fees), 'vwap': float(vwap),
-            'best_ask': float(best),
-            'highest_ask': max((f['price'] for f in fills), default=0),
-            'slippage_pct': float(abs(vwap - best) / best * 100) if best else 0,
-            'levels_consumed': len(fills), 'fills': fills,
-            'net_proceeds': float(cost - fees) if selling else 0}
-
-
-def payoff(up, down, budget):
-    debit = D(up['total_debit']) + D(down['total_debit'])
-    p_up, p_down = D(up['shares']) - debit, D(down['shares']) - debit
-    return {'up': up, 'down': down, 'deployed': float(debit), 'unspent': float(D(budget) - debit),
-            'fees': float(D(up['fee']) + D(down['fee'])), 'profit_up': float(p_up),
-            'profit_down': float(p_down), 'payout_up': up['shares'], 'payout_down': down['shares'],
-            'worst': float(min(p_up, p_down)), 'best': float(max(p_up, p_down)),
-            'worst_roi': float(min(p_up, p_down) / debit * 100) if debit else 0,
-            'best_roi': float(max(p_up, p_down) / debit * 100) if debit else 0}
+from execution_math import walk, payoff
 
 
 def allowed(result, settings, cash):
