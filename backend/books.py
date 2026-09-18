@@ -18,6 +18,10 @@ class Book:
         self.bids, self.asks = {}, {}
         self.event_ms, self.arrival_ms = 0, 0
         self.ready, self.hash = False, ''
+        self.initialized = False
+        self.anomaly_since = None
+        self.snapshot_ms = 0
+        self.timestamp_regressions = 0
 
     def level(self, price, size):
         p, q = Decimal(str(price)), Decimal(str(size))
@@ -31,21 +35,25 @@ class Book:
         if self.bids and self.asks and max(self.bids) >= min(self.asks):
             raise ValueError('Crossed order book')
 
-    def snapshot(self, msg):
+    def snapshot(self, msg, defer_validation=False):
         stamp = int(msg['timestamp'])
         if stamp <= 0 or stamp > time.time() * 1000 + 5000:
             raise ValueError('Invalid event timestamp')
         self.tick = str(msg.get('tick_size', self.tick))
         self.size_precision = precision(self.tick)
         self.minimum = float(msg.get('min_order_size', self.minimum))
-        self.bids = dict(self.level(x['price'], x['size']) for x in msg['bids'] if float(x['size']) > 0)
-        self.asks = dict(self.level(x['price'], x['size']) for x in msg['asks'] if float(x['size']) > 0)
-        self.validate()
+        bids = dict(self.level(x['price'], x['size']) for x in msg['bids'] if float(x['size']) > 0)
+        asks = dict(self.level(x['price'], x['size']) for x in msg['asks'] if float(x['size']) > 0)
+        self.bids, self.asks = bids, asks
+        self.initialized = True
+        if not defer_validation:
+            self.validate()
         self.event_ms, self.arrival_ms = stamp, time.time() * 1000
+        self.snapshot_ms = stamp
         self.hash, self.ready = msg.get('hash', ''), True
 
     def change(self, item, stamp):
-        if not self.ready or stamp < self.event_ms:
+        if not self.initialized or stamp < self.event_ms:
             raise ValueError('Missing snapshot or out-of-order event')
         if stamp > time.time() * 1000 + 5000:
             raise ValueError('Future event timestamp')
@@ -64,7 +72,9 @@ class Book:
         return {'token_id': self.token, 'bids': sorted(self.bids.items(), reverse=True),
                 'asks': sorted(self.asks.items()), 'event_ms': self.event_ms,
                 'arrival_ms': self.arrival_ms, 'ready': self.ready, 'hash': self.hash,
-                'tick': self.tick, 'minimum': self.minimum, 'size_precision': self.size_precision}
+                'tick': self.tick, 'minimum': self.minimum, 'size_precision': self.size_precision,
+                'timestamp_regressions': self.timestamp_regressions,
+                'recovering': self.anomaly_since is not None}
 
 
 def integrity(market, settings):
@@ -75,8 +85,10 @@ def integrity(market, settings):
     if not market.get('connected'):
         return 'CONNECTING', 'Waiting for a complete WebSocket snapshot'
     books = market['books']
-    if not all(b['ready'] and b['asks'] for b in books.values()):
-        return 'STALE', 'Incomplete order books; execution is locked'
+    if set(books) != {'up', 'down'} or not all(b['ready'] for b in books.values()):
+        return 'RECOVERING', 'Validating the order books. Trading resumes automatically when integrity is restored.'
+    if not all(b['asks'] for b in books.values()):
+        return 'NO_LIQUIDITY', 'One outcome has no asks available. Waiting for executable liquidity.'
     now = time.time() * 1000
     if any(now - b['arrival_ms'] > settings.stale_ms or now - b['event_ms'] > settings.stale_ms or b['event_ms'] > now + 1000 for b in books.values()):
         return 'STALE', 'Order-book freshness limit exceeded'
@@ -84,3 +96,20 @@ def integrity(market, settings):
     if delta > settings.sync_ms:
         return 'UNSYNCED', f'UP / DOWN event times differ by {delta:.0f} ms (limit {settings.sync_ms} ms)'
     return 'LIVE', 'Synchronized live order books'
+
+
+def side_integrity(market, side, settings):
+    """A single-outcome order does not combine books, so cross-book sync is irrelevant."""
+    if not market or market.get('error'):
+        return 'UNAVAILABLE', (market or {}).get('error') or 'Discovering active market'
+    if not market.get('start', 0) <= time.time() < market.get('end', 0):
+        return 'ROLLOVER', 'Waiting for the next active market'
+    book = market.get('books', {}).get(side)
+    if not market.get('connected') or not book or not book['ready']:
+        return 'RECOVERING', 'Waiting for a verified order-book snapshot'
+    if not book['asks']:
+        return 'NO_LIQUIDITY', f'No {side.upper()} asks are currently available'
+    now = time.time() * 1000
+    if now - book['arrival_ms'] > settings.stale_ms or now - book['event_ms'] > settings.stale_ms or book['event_ms'] > now + 1000:
+        return 'STALE', f'{side.upper()} order book is stale'
+    return 'LIVE', 'Fresh single-outcome book'

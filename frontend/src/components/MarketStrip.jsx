@@ -3,11 +3,11 @@ import { Clock3, ChevronDown } from 'lucide-react';
 import { num } from '../lib/api';
 
 const symbols = { BTC: '₿', ETH: 'Ξ', SOL: '◎' };
-export const Countdown = ({ end }) => {
+export const Countdown = ({ end, testId = 'market-countdown' }) => {
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(timer); }, []);
   const left = Math.max(0, Math.ceil((end || now) - now));
-  return <span className={left < 30 ? 'amber' : ''} data-testid="market-countdown">{end ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : '--:--'}</span>;
+  return <span className={left < 30 ? 'amber' : ''} data-testid={testId}>{end ? `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` : '--:--'}</span>;
 };
 export const MarketStrip = ({ markets = [], asset, select, disabled }) => <div className="market-strip">{['BTC', 'ETH', 'SOL'].map(symbol => {
   const m = markets.find(x => x.asset === symbol);

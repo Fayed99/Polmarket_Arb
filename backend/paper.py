@@ -44,7 +44,7 @@ class PaperEngine:
             if prior:
                 return prior
             quote = session['quotes'].get(req.quote_id)
-            if not quote or time.time() - quote['created'] > 10:
+            if not quote or quote.get('kind') == 'manual' or time.time() - quote['created'] > 10:
                 raise HTTPException(409, 'Recommendation expired. Wait for a fresh opportunity.')
             settings = session['settings'].model_copy(deep=True)
             if quote['settings'] != settings.model_dump() or settings.paused:

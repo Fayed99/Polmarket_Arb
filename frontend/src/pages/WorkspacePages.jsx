@@ -13,7 +13,7 @@ export const ActivityPage = ({ positionsOnly=false, version }) => {
   const [filter, setFilter] = useState('all'), [expanded, setExpanded] = useState(null), [recovering, setRecovering] = useState(null);
   const load = useCallback(async () => { try { const res = await api.get('/trades'); setTrades(res.data); setError(''); } catch(e) { setError(errorText(e)); } finally { setLoading(false); } }, []);
   useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, [load, version]);
-  const open = trades.filter(t => ['LOCKED_POSITION','RECOVERY_REQUIRED','EXECUTING'].includes(t.status));
+  const open = trades.filter(t => ['LOCKED_POSITION','OPEN_POSITION','RECOVERY_REQUIRED','EXECUTING'].includes(t.status));
   const filtered = (positionsOnly ? open : trades).filter(t => filter === 'all' || t.asset === filter);
   const total = trades.reduce((sum,t) => sum+(t.realized_pnl || 0),0);
   const recover = async id => { setRecovering(id); try { const {data} = await api.post(`/trades/${id}/recover`); toast.info(data.events.at(-1)?.message); await load(); } catch(e) { toast.error(errorText(e)); } finally { setRecovering(null); } };

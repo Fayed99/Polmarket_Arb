@@ -11,15 +11,17 @@ from uuid import UUID
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv(Path(__file__).parent / '.env')
-from models import Settings, ExecutionRequest, ManualRequest, StoredRecord
+from models import Settings, ExecutionRequest, ManualRequest, StoredRecord, ManualBuyQuoteRequest, ManualBuyExecuteRequest
 from feed import MarketFeed
-from books import integrity
+from books import integrity, side_integrity
 from optimizer import optimize, no_trade, walk, payoff, D
 from paper import PaperEngine, utcnow
+from manual import ManualPaperEngine
+from spot import SpotFeed
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger('httpx').setLevel(logging.WARNING)
@@ -27,6 +29,8 @@ client = AsyncIOMotorClient(os.environ['MONGO_URL'])
 db = client[os.environ['DB_NAME']]
 feed = MarketFeed()
 engine = PaperEngine(feed, db)
+manual_engine = ManualPaperEngine(engine)
+spot = SpotFeed(feed.registry, feed.notify)
 sessions = {}
 session_lock = asyncio.Lock()
 
@@ -49,7 +53,7 @@ async def get_session(sid):
 async def settlement_loop():
     while not feed.stopping:
         try:
-            records = await db.trades.find({'status': {'$in': ['LOCKED_POSITION', 'RECOVERY_REQUIRED']}, 'market_end': {'$lt': time.time() - 10}}, {'_id': 0}).to_list(100)
+            records = await db.trades.find({'status': {'$in': ['LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED']}, 'market_end': {'$lt': time.time() - 10}}, {'_id': 0}).to_list(100)
             market_cache = {}
             for record in records:
                 slug = record['market_slug']
@@ -64,8 +68,9 @@ async def settlement_loop():
                 session = await get_session(record['session_id'])
                 async with session['lock']:
                     current = await db.trades.find_one({'id': record['id']}, {'_id': 0})
-                    if current['status'] not in ('LOCKED_POSITION', 'RECOVERY_REQUIRED'):
+                    if not current or current['status'] not in ('LOCKED_POSITION', 'OPEN_POSITION', 'RECOVERY_REQUIRED'):
                         continue
+                    record = current
                     payout = record['remaining_shares'].get(winner, 0)
                     session['cash'] = float(D(session['cash']) + D(payout))
                     record['winner'], record['payout'] = winner, payout
@@ -87,12 +92,14 @@ async def lifespan(app):
     await db.trades.create_index([('session_id', 1), ('request_id', 1)], unique=True)
     await db.trades.update_many({'status': 'EXECUTING'}, {'$set': {'status': 'RECOVERY_REQUIRED'}, '$push': {'events': {'state': 'RECOVERY_REQUIRED', 'at': utcnow(), 'message': 'Application restarted during paper execution; reconciliation required'}}})
     await feed.start()
+    await spot.start()
     task = asyncio.create_task(settlement_loop())
     yield
     feed.stopping = True
     task.cancel()
     await asyncio.wait([task], timeout=3)
     await feed.stop()
+    await spot.stop()
     client.close()
 
 
@@ -126,14 +133,21 @@ async def state(session):
     diagnostics = {'status': status, 'reason': reason, 'sync_ms': abs(books['up']['event_ms'] - books['down']['event_ms']) if len(books) == 2 else None,
                    'events': feed.events, 'resyncs': feed.resyncs, 'uptime': time.time() - feed.started,
                    'book_ages': {s: round(now-b['arrival_ms']) for s,b in books.items()},
-                   'event_ages': {s: round(now-b['event_ms']) for s,b in books.items()}, 'version': feed.version}
+                   'event_ages': {s: round(now-b['event_ms']) for s,b in books.items()}, 'version': feed.version,
+                   'reconnects': feed.reconnects, 'timestamp_regressions': feed.timestamp_regressions}
+    manual_quotes = {}
+    for side in ('up', 'down'):
+        side_status, side_reason = side_integrity(market, side, settings)
+        manual_quotes[side] = {'status': side_status, 'reason': side_reason}
     return {'settings': settings.model_dump(), 'markets': markets, 'market': market, 'decision': decision,
-            'diagnostics': diagnostics, 'wallet': {'cash': session['cash'], 'mode': 'PAPER'}, 'server_time': time.time(), 'live_execution': False}
+            'diagnostics': diagnostics, 'wallet': {'cash': session['cash'], 'mode': 'PAPER'}, 'server_time': time.time(), 'live_execution': False,
+            'reference': spot.snapshot(settings.asset), 'manual_quotes': manual_quotes}
 
 
 @app.get('/api/health')
 async def health():
-    return {'status': 'ok', 'mode': 'PAPER', 'live_execution': False, 'events': feed.events, 'markets': {a: m.get('connected', False) for a,m in feed.markets.items()}}
+    return {'status': 'ok', 'mode': 'PAPER', 'live_execution': False, 'events': feed.events, 'markets': {a: m.get('connected', False) for a,m in feed.markets.items()},
+            'binance': {asset: spot.snapshot(asset)['status'] for asset in spot.assets}}
 
 
 @app.get('/api/state')
@@ -149,6 +163,7 @@ async def stream(request: Request, session_id: str = Query(...)):
         yield 'retry: 300\n\n'
         # Bound stream lifetime so graceful updates never wait indefinitely on clients.
         while time.monotonic() - opened < 30 and not await request.is_disconnected():
+            cycle_start = time.monotonic()
             changed = feed.changed
             try:
                 data = await state(session)
@@ -160,7 +175,7 @@ async def stream(request: Request, session_id: str = Query(...)):
                 yield 'event: feed-error\ndata: {"message":"Calculation unavailable; execution disabled"}\n\n'
                 await asyncio.sleep(1)
             try:
-                await asyncio.wait_for(changed.wait(), 1)
+                await asyncio.wait_for(changed.wait(), max(0.001, 1-(time.monotonic()-cycle_start)))
             except asyncio.TimeoutError:
                 pass
     return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
@@ -186,6 +201,26 @@ async def execute(req: ExecutionRequest, x_session_id: str = Header(...)):
 @app.post('/api/live/execute')
 async def live_execute():
     raise HTTPException(423, 'Real trading is locked. This build only supports paper execution; no wallet secrets or signing path are configured.')
+
+
+@app.get('/api/reference')
+async def references():
+    return {asset: spot.snapshot(asset) for asset in spot.assets}
+
+
+@app.get('/api/readme')
+async def readme():
+    return FileResponse(Path(__file__).parent.parent / 'README.md', media_type='text/markdown', filename='README.md')
+
+
+@app.post('/api/paper/manual/quote')
+async def manual_quote(req: ManualBuyQuoteRequest, x_session_id: str = Header(...)):
+    return await manual_engine.quote(await get_session(x_session_id), req)
+
+
+@app.post('/api/paper/manual/execute', response_model=StoredRecord)
+async def manual_execute(req: ManualBuyExecuteRequest, x_session_id: str = Header(...)):
+    return await asyncio.shield(manual_engine.execute(await get_session(x_session_id), req))
 
 
 @app.get('/api/trades', response_model=list[StoredRecord])

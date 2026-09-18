@@ -46,3 +46,17 @@ class ManualRequest(BaseModel):
 class StoredRecord(BaseModel):
     model_config = ConfigDict(extra='allow')
     id: str
+
+
+class ManualBuyQuoteRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra='forbid')
+    side: Literal['up', 'down']
+    amount: float = Field(gt=0, le=100000)
+    unit: Literal['dollars', 'shares'] = 'dollars'
+
+
+class ManualBuyExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    quote_id: str = Field(min_length=8, max_length=100)
+    request_id: str = Field(min_length=8, max_length=80)
+    accept_directional_risk: Literal[True]

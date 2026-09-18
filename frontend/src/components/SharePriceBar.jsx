@@ -1,0 +1,8 @@
+import { ArrowDownRight, ArrowUpRight, ChevronDown } from 'lucide-react';
+import { money, num } from '../lib/api';
+
+export const SharePriceBar = ({data, connected}) => {
+  const budget=data?.settings?.budget ?? 100;
+  const deployed=connected&&data?.decision?.status==='READY'?data.decision.deployed:0;
+  return <div className="share-price-bar" data-testid="share-price-bar"><div className="share-market-name"><span>{data?.settings?.asset || 'BTC'}</span><b>5M</b><span>Contract prices</span></div><div className="persistent-prices">{['up','down'].map(side=>{const b=data?.market?.books?.[side];const quote=data?.manual_quotes?.[side];const valid=connected && quote?.status==='LIVE';return <div key={side} className={`persistent-price ${side}`} data-testid={`persistent-${side}-quote`}><span>{side==='up'?<ArrowUpRight size={14}/>:<ArrowDownRight size={14}/>} {side.toUpperCase()}</span><strong>{b?.asks?.length?`${num(b.asks[0][0]*100,1)}¢`:'—'}</strong><small className={valid?'':'amber'}>{valid?'LIVE':b?.asks?.length?'LAST KNOWN':'WAITING'}</small></div>;})}</div><div className="ribbon-capital">{[['Budget pool',budget],['Auto deploy',deployed],['Unspent',budget-deployed]].map(([label,value])=><span key={label}>{label}<b data-testid={`ribbon-${label.toLowerCase().replaceAll(' ','-')}`}>{money(value)}</b></span>)}</div><button data-testid="jump-manual-trade-button" onClick={()=>document.getElementById('manual-trading')?.scrollIntoView({behavior:'smooth',block:'center'})}>Trade separately <ChevronDown size={13}/></button></div>;
+};

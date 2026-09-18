@@ -22,6 +22,8 @@ class MarketFeed:
         self.version, self.events, self.resyncs = 0, 0, 0
         self.started = time.time()
         self.stopping = False
+        self.reconnects = 0
+        self.timestamp_regressions = 0
 
     async def notify(self):
         self.version += 1
@@ -85,13 +87,16 @@ class MarketFeed:
 
     async def run(self, entry):
         backoff = 1
+        market = None
         while not self.stopping:
-            market = None
             try:
-                market = await self.discover(entry)
-                self.markets[entry['asset']] = market
+                if not market or time.time() >= market['end'] or market.get('refresh_config', False):
+                    fresh = await self.discover(entry)
+                    market = fresh
+                    self.markets[entry['asset']] = market
                 await self.resnapshot(market)
                 await self.notify()
+                market['stream_started'] = time.time()
                 await self.stream(market)
                 backoff = 1
             except asyncio.CancelledError:
@@ -104,10 +109,15 @@ class MarketFeed:
                     for b in market['books'].values():
                         b.ready = False
                 else:
-                    self.markets[entry['asset']] = {**entry, 'books': {}, 'error': 'Market discovery unavailable; retrying', 'connected': False}
+                    previous = self.markets.get(entry['asset'], {**entry, 'books': {}})
+                    previous.update(error='Market discovery unavailable; retrying', connected=False)
+                    self.markets[entry['asset']] = previous
+                self.reconnects += 1
                 await self.notify()
+                if market and time.time() - market.get('stream_started', 0) > 5:
+                    backoff = 0.25
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 15)
+                backoff = min(backoff * 2, 5)
 
     async def stream(self, market):
         lookup = {book.token: book for book in market['books'].values()}
@@ -115,9 +125,12 @@ class MarketFeed:
         # REST is recovery only. Require a fresh WS snapshot before permitting calculations.
         for book in lookup.values():
             book.ready = False
+            book.initialized = False
+            book.anomaly_since = None
         async with websockets.connect(self.ws_url, ping_interval=None, open_timeout=12, close_timeout=2) as ws:
             await ws.send(json.dumps({'assets_ids': list(lookup), 'type': 'market', 'initial_dump': True}))
             last_ping = time.time()
+            last_message = time.time()
             while time.time() < market['end'] and not self.stopping:
                 if time.time() - last_ping >= 10:
                     await ws.send('PING')
@@ -125,29 +138,53 @@ class MarketFeed:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=1)
                 except asyncio.TimeoutError:
+                    if time.time() - last_message > 20:
+                        raise ValueError('WebSocket heartbeat timeout')
+                    if any(b.anomaly_since and time.monotonic() - b.anomaly_since > 0.3 for b in lookup.values()):
+                        raise ValueError('Persistent crossed book; fetching fresh snapshot')
                     continue
+                last_message = time.time()
                 if raw in ('PONG', 'pong'):
                     continue
                 payload = json.loads(raw)
                 changed = False
+                touched = set()
                 for msg in payload if isinstance(payload, list) else [payload]:
                     kind = msg.get('event_type')
                     if kind == 'book' and msg.get('asset_id') in lookup:
-                        lookup[msg['asset_id']].snapshot(msg)
+                        lookup[msg['asset_id']].snapshot(msg, defer_validation=True)
                         pending.discard(msg['asset_id'])
+                        touched.add(msg['asset_id'])
                         changed = True
                     elif kind == 'price_change':
-                        touched = set()
                         for item in msg.get('price_changes', []):
                             token = item['asset_id']
                             if token in lookup:
+                                stamp = int(msg['timestamp'])
+                                if stamp < lookup[token].snapshot_ms:
+                                    # The full snapshot already supersedes this queued older event.
+                                    lookup[token].timestamp_regressions += 1
+                                    self.timestamp_regressions += 1
+                                    continue
                                 lookup[token].change(item, int(msg['timestamp']))
                                 touched.add(token)
-                        for token in touched:
-                            lookup[token].validate()
                         changed = bool(touched) or changed
                     elif kind in ('tick_size_change', 'market_resolved'):
+                        market['refresh_config'] = True
                         raise ValueError('Market configuration changed; rebuilding books')
+                # Validate only after the entire message/batch. A transient crossed state
+                # disables recommendations immediately but gets 300 ms to normalize.
+                for token in touched:
+                    book = lookup[token]
+                    try:
+                        book.validate()
+                        book.ready, book.anomaly_since = True, None
+                    except ValueError:
+                        book.ready = False
+                        if book.anomaly_since is None:
+                            book.anomaly_since = time.monotonic()
+                        elif time.monotonic() - book.anomaly_since > 0.3:
+                            raise ValueError('Persistent crossed book; fetching fresh snapshot')
                 if changed:
                     market['connected'] = not pending
                     market['error'] = None

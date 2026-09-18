@@ -1,0 +1,20 @@
+import { useMemo } from 'react';
+import { ArrowDownRight, ArrowUpRight, Clock3, Info, Radio } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { Countdown } from './MarketStrip';
+import { money, signed } from '../lib/api';
+
+const timeLabel = value => new Date(value * 1000).toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+export const SpotChart = ({ reference, asset, connected }) => {
+  const r = reference || {}, live = connected && r.status === 'LIVE';
+  const points = r.points || [];
+  const domain = useMemo(() => { const values = points.map(p => p.price); if (r.window_open != null) values.push(r.window_open); if (!values.length) return [0,1]; const lo = Math.min(...values), hi = Math.max(...values); const pad = Math.max((hi-lo)*0.2, hi*0.000025); return [lo-pad,hi+pad]; }, [points, r.window_open]);
+  const positive = (r.difference || 0) >= 0;
+  const Move = positive ? ArrowUpRight : ArrowDownRight;
+  return <section className="spot-chart-section" data-testid="binance-chart-section">
+    <div className="spot-chart-heading"><span className="chart-pair" data-testid="binance-symbol">{asset} <span>/ USDT</span><b>SPOT</b></span><span className={`spot-feed-status ${live ? 'up' : 'amber'}`} data-testid="binance-status"><i/>{live ? 'BINANCE LIVE' : r.price != null ? 'BINANCE · STALE' : 'BINANCE · CONNECTING'}</span></div>
+    <div className="spot-metrics"><div><span>5m opening reference <Info size={11}/></span><strong data-testid="binance-opening-price">{r.window_open != null ? money(r.window_open) : '—'}</strong></div><div className="current-spot"><span>Current Binance price <b className={positive?'up':'down'} data-testid="binance-price-difference"><Move size={11}/>{r.difference != null ? signed(r.difference) : '—'}</b></span><strong data-testid="binance-current-price">{r.price != null ? money(r.price) : '—'}</strong></div><div className="spot-countdown"><span><Clock3 size={11}/> TIME LEFT</span><strong><Countdown end={r.window_end} testId="binance-countdown"/></strong></div></div>
+    <div className="spot-plot" data-testid="binance-price-chart">{points.length > 1 ? <ResponsiveContainer width="100%" height="100%"><LineChart data={points} margin={{top:18,right:5,bottom:0,left:0}}><CartesianGrid stroke="#262d35" vertical={false} strokeDasharray="2 4"/><XAxis type="number" domain={[r.window_start, r.window_end]} dataKey="time" tickFormatter={timeLabel} tick={{fontSize:9,fill:'#6f818d'}} ticks={[0,60,120,180,240,300].map(n=>r.window_start+n)} axisLine={false} tickLine={false} minTickGap={35}/><YAxis orientation="right" domain={domain} tickFormatter={value=>money(value, asset==='SOL'?2:0)} tick={{fontSize:9,fill:'#768895'}} width={65} axisLine={false} tickLine={false} tickCount={4}/><Tooltip contentStyle={{background:'#131a20',border:'1px solid #34434e',borderRadius:4,fontSize:11}} labelFormatter={timeLabel} formatter={value=>[money(value),'Binance spot']} isAnimationActive={false}/>{r.window_open != null && <ReferenceLine y={r.window_open} stroke="#83939a" strokeDasharray="5 5" label={{value:'OPEN',position:'insideTopLeft',fill:'#82949d',fontSize:8}}/>}<Line type="linear" dataKey="price" stroke="#e8b44e" strokeWidth={2} dot={false} activeDot={{r:4,fill:'#e8b44e',stroke:'#111419',strokeWidth:2}} isAnimationActive={false} connectNulls={false}/></LineChart></ResponsiveContainer> : <div className="chart-unavailable" data-testid="binance-chart-empty"><Radio size={22}/><span>{r.error || 'Connecting to Binance market data…'}</span></div>}</div>
+    <div className="spot-chart-footer"><span><span className="binance-mark">◆</span> Binance spot reference · not settlement</span><span title="Polymarket resolves against its market-specific official oracle, not Binance." data-testid="official-price-to-beat">Official price to beat: unavailable</span></div>
+  </section>;
+};

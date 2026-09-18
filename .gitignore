@@ -89,3 +89,4 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+!**/.env.example
