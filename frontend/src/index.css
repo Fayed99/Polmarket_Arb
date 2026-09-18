@@ -1,0 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Sans:wght@400;450;500;550;600;650;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root { --background: 220 22% 5%; --foreground: 210 20% 96%; --card: 220 20% 8%; --card-foreground: 210 20% 96%; --popover: 220 20% 10%; --popover-foreground: 210 20% 96%; --primary: 186 82% 52%; --primary-foreground: 220 25% 5%; --secondary: 220 16% 14%; --secondary-foreground: 210 20% 96%; --muted: 220 16% 14%; --muted-foreground: 217 12% 60%; --accent: 220 16% 16%; --accent-foreground: 210 20% 96%; --destructive: 0 72% 56%; --destructive-foreground: 0 0% 100%; --border: 220 14% 17%; --input: 220 14% 20%; --ring: 186 82% 52%; --radius: .375rem; }
+  * { @apply border-border; box-sizing: border-box; letter-spacing: 0; }
+  body { @apply bg-background text-foreground; margin: 0; font-family: 'DM Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; }
+  button, a, input, select { -webkit-tap-highlight-color: transparent; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #30d8e6; outline-offset: 3px; }
+  ::selection { background: #164c54; color: white; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; } ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; }
+}

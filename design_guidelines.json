@@ -1,0 +1,167 @@
+{
+  "project_title": "Polymarket Multi-Asset Short-Term Up/Down Opportunity Optimizer",
+  "app_type": "dashboard",
+  "archetype": "ARCHETYPE 2: THE PERFORMANCE PRO (Tactical Minimalism & Data Precision)",
+  "color_palette": {
+    "theme": "dark",
+    "background_primary": "#080B11",
+    "background_secondary": "#0F141C",
+    "background_tertiary": "#161D2A",
+    "background_card": "rgba(15, 20, 28, 0.85)",
+    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "border_active": "rgba(6, 182, 212, 0.4)",
+    "border_warning": "rgba(245, 158, 11, 0.4)",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "text_muted": "#64748B",
+    "accent_up_green": "#10B981",
+    "accent_up_glow": "rgba(16, 185, 129, 0.2)",
+    "accent_down_red": "#EF4444",
+    "accent_down_glow": "rgba(239, 68, 68, 0.2)",
+    "accent_cyan_primary": "#06B6D4",
+    "accent_cyan_hover": "#0891B2",
+    "accent_amber_warning": "#F59E0B",
+    "forbidden_colors_alert": "DO NOT use #1B93A4 (Teal Blue) or #7351B7 (AI Purple)."
+  },
+  "typography": {
+    "font_family_headings": "Barlow Condensed, Chivo, Cabinet Grotesk, Outfit, sans-serif",
+    "font_family_data_numbers": "JetBrains Mono, IBM Plex Mono, monospace",
+    "font_family_body": "Inter, DM Sans, system-ui, sans-serif",
+    "forbidden_heading_font": "Space Grotesk or plain Inter for main section headings",
+    "hierarchy_rules": {
+      "hero_title": "text-3xl sm:text-4xl lg:text-5xl font-extrabold uppercase tracking-tight",
+      "section_heading": "text-xl sm:text-2xl font-bold uppercase tracking-wide",
+      "card_title": "text-sm font-semibold tracking-wider text-slate-400 uppercase",
+      "metric_value_large": "text-2xl sm:text-3xl lg:text-4xl font-black font-mono tracking-tight",
+      "metric_value_hero": "text-4xl sm:text-5xl lg:text-6xl font-black font-mono tracking-tight text-cyan-400",
+      "subtext_label": "text-xs font-medium text-slate-400 uppercase tracking-widest"
+    }
+  },
+  "layout_and_grid": {
+    "mode": "MODE B: High Density Tactical Dashboard",
+    "container_padding": "p-4 sm:p-6 lg:p-8 space-y-6",
+    "base_grid": "grid grid-cols-1 md:grid-cols-12 gap-4 lg:gap-6",
+    "sections_mapping": {
+      "top_nav": "Fixed z-50 glassmorphism header (bg-[#080B11]/90 backdrop-blur-md border-b border-white/10 px-6 py-3.5) with live asset selector [BTC 5M, ETH 5M, SOL 5M], status badges [WebSocket Freshness, Feed Delay ms, Order Book Depth, Paper Trading Active], and Real Trading Lock Toggle.",
+      "hero_optimizer_decision_banner": "col-span-12 rounded-xl bg-gradient-to-r from-slate-900/90 via-cyan-950/40 to-slate-900/90 border-2 border-cyan-500/40 p-6 shadow-[0_0_30px_rgba(6,182,212,0.15)] relative overflow-hidden",
+      "budget_capital_bar": "col-span-12 md:col-span-4 rounded-xl bg-[#0F141C] border border-white/10 p-5 space-y-4",
+      "objective_selector": "col-span-12 md:col-span-8 rounded-xl bg-[#0F141C] border border-white/10 p-5 space-y-4",
+      "payoff_and_allocation_matrix": "col-span-12 lg:col-span-7 rounded-xl bg-[#0F141C] border border-white/10 p-5 space-y-4",
+      "execution_action_card": "col-span-12 lg:col-span-5 rounded-xl bg-[#0F141C] border-2 border-emerald-500/30 p-5 space-y-5 relative",
+      "depth_and_raw_orderbook_expandable": "col-span-12 rounded-xl bg-[#0F141C] border border-white/10 p-5 space-y-4",
+      "paper_execution_and_positions": "col-span-12 rounded-xl bg-[#0F141C] border border-white/10 p-5 space-y-4"
+    }
+  },
+  "key_components_definition": {
+    "decision_banner": {
+      "description": "1-second decision hero badge showing clear trade verdict ('RECOMMENDED BUY', 'NO TRADE VALID', or 'NEUTRAL HEDGE'). Displays instant summary of DEPLOYED vs CASH, expected payout range, and worst-case vs best-case scenario.",
+      "data_testids": [
+        "optimizer-decision-banner",
+        "verdict-badge",
+        "decision-reason-text",
+        "recommended-action-cta"
+      ]
+    },
+    "market_selector_tabs": {
+      "description": "Tabs for BTC 5M, ETH 5M, SOL 5M with live countdown timer to market rollover (e.g. 03:42), current spot index price, and 5M trend volatility.",
+      "data_testids": [
+        "market-tab-btc",
+        "market-tab-eth",
+        "market-tab-sol",
+        "market-countdown-timer",
+        "spot-price-display"
+      ]
+    },
+    "capital_controls_widget": {
+      "description": "Capital pool inputs (Max Available Capital budget slider/input, Deployed Capital, Unspent Cash). Highlight that budget pool is total available capital and NOT mandatory trade size.",
+      "data_testids": [
+        "budget-pool-input",
+        "budget-pool-slider",
+        "deployed-capital-display",
+        "unspent-cash-display",
+        "capital-utilization-progress"
+      ]
+    },
+    "objective_selector_matrix": {
+      "description": "5-way Objective Selector with toggle buttons: [Guaranteed Profit, Controlled Loss, Max Worst-Case Profit, Max Upside, Custom Risk]. Includes min yield % and max drawdown tolerance sliders.",
+      "data_testids": [
+        "objective-btn-guaranteed-profit",
+        "objective-btn-controlled-loss",
+        "objective-btn-max-worst-case",
+        "objective-btn-max-upside",
+        "objective-btn-custom",
+        "min-yield-slider",
+        "max-drawdown-slider"
+      ]
+    },
+    "allocation_and_payoff_details": {
+      "description": "Exact UP and DOWN split details: UP cost, DOWN cost, estimated execution fees, total debit, shares required, VWAP for UP/DOWN, and exact outcome payoffs (If UP wins profit +%, If DOWN wins profit +%).",
+      "data_testids": [
+        "allocation-up-shares",
+        "allocation-up-vwap",
+        "allocation-up-cost",
+        "allocation-down-shares",
+        "allocation-down-vwap",
+        "allocation-down-cost",
+        "total-debit-display",
+        "execution-fees-display",
+        "payoff-up-win-profit",
+        "payoff-down-win-profit",
+        "worst-case-payout-display",
+        "best-case-payout-display"
+      ]
+    },
+    "execution_cta": {
+      "description": "High-visibility primary action button: 'BUY RECOMMENDED TRADE [DEPLOY $X | KEEP $Y CASH]'. Supports paper execution mode instantly with confirmation toasts and order ID logging.",
+      "data_testids": [
+        "buy-recommended-trade-button",
+        "paper-trade-mode-badge",
+        "real-trade-locked-badge",
+        "unlock-backend-creds-button"
+      ]
+    },
+    "live_orderbook_and_feeds": {
+      "description": "WebSocket depth books, precision, min size, freshness (ms), rollover countdown, synchronization status, paper history log, and diagnostic telemetry.",
+      "data_testids": [
+        "websocket-status-indicator",
+        "orderbook-depth-up",
+        "orderbook-depth-down",
+        "paper-positions-table",
+        "paper-history-log",
+        "diagnostics-drawer-trigger"
+      ]
+    }
+  },
+  "image_urls": [
+    {
+      "category": "trading_chart_background",
+      "url": "https://images.unsplash.com/photo-1590283603385-17ffb3a7f29f?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Dark mode cryptocurrency trading chart terminal display"
+    },
+    {
+      "category": "crypto_hardware_and_data",
+      "url": "https://images.unsplash.com/photo-1605792657660-596af9009e82?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Bitcoin and Ethereum coins on keyboard with trading indicators"
+    }
+  ],
+  "motion_and_interactions": {
+    "hover_states": "All buttons have active scale effect (active:scale-[0.98]), clear highlight borders, and soft glow overlays.",
+    "transitions": "Specific CSS transitions on opacity and color (transition-colors duration-150, transition-opacity duration-200). Explicitly NO 'transition: all' on transform elements.",
+    "toast_notifications": "Use Sonner for instant trade order execution feedback, market rollover warnings, and risk alerts.",
+    "prefers_reduced_motion": "Respect system accessibility settings using motion-safe responsive Tailwind utilities."
+  },
+  "testing_and_accessibility": {
+    "data_testid_policy": "All key operational controls, market switches, numerical displays, sliders, and execution CTAs MUST have explicit kebab-case data-testid attributes.",
+    "apca_contrast": "High contrast dark mode (APCA > 75) with bold text for figures and values.",
+    "focus_states": "Visible focus ring (focus:ring-2 focus:ring-cyan-400 focus:outline-none) on all interactive elements."
+  },
+  "instructions_to_main_agent": [
+    "Build a decision-first dashboard where the core verdict (BUY / DO NOT TRADE) and exact UP/DOWN allocation can be evaluated in ~1 second.",
+    "Keep Budget Pool as maximum available capital and show that trade size is calculated strictly based on optimal payoff geometry, leaving remaining cash unspent.",
+    "Use JetBrains Mono or IBM Plex Mono for all financial values, prices, shares, VWAP, and dollar amounts.",
+    "Use Barlow Condensed / Chivo / Cabinet Grotesk for section titles and hero action badges.",
+    "Ensure paper execution is enabled by default with real-time feedback, simulated order fills, PnL tracking, and position management.",
+    "Keep real trading locked behind missing credentials alert with a clear lock icon and toggle.",
+    "Include live WebSocket mock/real feed status, order book depth charts for UP and DOWN options, and 5-minute rollover countdowns for BTC, ETH, and SOL."
+  ]
+}
